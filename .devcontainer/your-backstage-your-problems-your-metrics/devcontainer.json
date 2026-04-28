@@ -1,0 +1,33 @@
+{
+  "name": "Your Backstage, Your Problems, Your Metrics",
+  "image": "mcr.microsoft.com/devcontainers/base:bullseye",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}/your-backstage-your-problems-your-metrics",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+  },
+  "postCreateCommand": "bash /workspaces/${localWorkspaceFolderBasename}/.devcontainer/your-backstage-your-problems-your-metrics/post-create.sh",
+  "postStartCommand": "bash /workspaces/${localWorkspaceFolderBasename}/.devcontainer/your-backstage-your-problems-your-metrics/post-start.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [],
+      "settings": {
+        "python.languageServer": "None",
+        "python.analysis.indexing": false
+      }
+    },
+    "codespaces": {
+      "openFiles": [
+        "your-backstage-your-problems-your-metrics/README.md"
+      ],
+      "permissions": {
+        "codespaces": "write"
+      }
+    }
+  },
+  "forwardPorts": [],
+  "portsAttributes": {
+  },
+  "otherPortsAttributes": {
+    "onAutoForward": "ignore"
+  }
+}
