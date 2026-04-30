@@ -7,7 +7,7 @@ DEMO_DIR="$(cd "$SCRIPT_DIR/../../your-backstage-your-problems-your-metrics" && 
 LIB_DIR="$HOME/.devcontainer-lib"
 
 mkdir -p "$LIB_DIR"
-curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.2.2.tar.gz" \
+curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.2.3.tar.gz" \
   | tar -xz --strip-components=2 -C "$LIB_DIR"
 
 # Registry for demo service images built by Argo Workflows
@@ -38,3 +38,32 @@ docker network connect kind registry
 kubectl create namespace backstage
 kubectl apply -f "$DEMO_DIR/cluster/backstage/"
 kubectl rollout status deployment/backstage -n backstage
+
+# Argo Events resources
+kubectl apply -f "$DEMO_DIR/cluster/argo-events/"
+until kubectl get deployment gitea-eventsource -n argo-events 2>/dev/null; do sleep 2; done
+kubectl rollout status deployment/gitea-eventsource -n argo-events --timeout=120s
+
+# ArgoCD ApplicationSet
+GITEA_TOKEN=$(curl -s -X POST http://localhost:30110/api/v1/users/gitea/tokens \
+  -u gitea:gitea \
+  -H "Content-Type: application/json" \
+  -d '{"name": "argocd"}' | jq -r '.sha1')
+kubectl create secret generic gitea-token \
+  --from-literal=token="$GITEA_TOKEN" \
+  -n argocd
+kubectl apply -f "$DEMO_DIR/cluster/argocd/"
+
+# Configure Gitea user webhook to forward push events to Argo Events
+curl -s -X POST http://localhost:30110/api/v1/user/hooks \
+  -u gitea:gitea \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "gitea",
+    "config": {
+      "url": "http://gitea-eventsource-svc.argo-events.svc.cluster.local:12000/push",
+      "content_type": "json"
+    },
+    "events": ["push"],
+    "active": true
+  }'
