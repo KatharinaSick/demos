@@ -7,7 +7,7 @@ DEMO_DIR="$(cd "$SCRIPT_DIR/../../your-backstage-your-problems-your-metrics" && 
 LIB_DIR="$HOME/.devcontainer-lib"
 
 mkdir -p "$LIB_DIR"
-curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.2.3.tar.gz" \
+curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.2.4.tar.gz" \
   | tar -xz --strip-components=2 -C "$LIB_DIR"
 
 # Registry for demo service images built by Argo Workflows
