@@ -39,6 +39,9 @@ kubectl create namespace backstage
 kubectl apply -f "$DEMO_DIR/cluster/backstage/"
 kubectl rollout status deployment/backstage -n backstage
 
+# Argo Workflows WorkflowTemplate + RBAC
+kubectl apply -f "$DEMO_DIR/cluster/argo-workflows/"
+
 # Argo Events resources
 kubectl apply -f "$DEMO_DIR/cluster/argo-events/"
 until kubectl get deployment gitea-eventsource -n argo-events 2>/dev/null; do sleep 2; done
