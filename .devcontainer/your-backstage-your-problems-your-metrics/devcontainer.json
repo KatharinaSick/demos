@@ -3,29 +3,30 @@
   "image": "mcr.microsoft.com/devcontainers/base:bullseye",
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}/your-backstage-your-problems-your-metrics",
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },
   "postCreateCommand": "bash /workspaces/${localWorkspaceFolderBasename}/.devcontainer/your-backstage-your-problems-your-metrics/post-create.sh",
   "postStartCommand": "bash /workspaces/${localWorkspaceFolderBasename}/.devcontainer/your-backstage-your-problems-your-metrics/post-start.sh",
-  "customizations": {
+"customizations": {
     "vscode": {
-      "extensions": [],
-      "settings": {
-        "python.languageServer": "None",
-        "python.analysis.indexing": false
-      }
+      "extensions": [
+        "ms-kubernetes-tools.vscode-kubernetes-tools"
+      ],
+      "settings": {}
     },
     "codespaces": {
       "openFiles": [
         "your-backstage-your-problems-your-metrics/README.md"
-      ],
-      "permissions": {
-        "codespaces": "write"
-      }
+      ]
     }
   },
-  "forwardPorts": [],
+  "forwardPorts": [30100, 30103, 30110, 30111, 30200],
   "portsAttributes": {
+    "30100": { "label": "ArgoCD" },
+    "30103": { "label": "Jaeger" },
+    "30110": { "label": "Gitea" },
+    "30111": { "label": "Argo Workflows" },
+    "30200": { "label": "Backstage" }
   },
   "otherPortsAttributes": {
     "onAutoForward": "ignore"

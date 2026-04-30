@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backstage-config
+  namespace: backstage
+data:
+  app-config.production.yaml: |
+    app:
+      title: Alfie Corp Developer Portal
+      baseUrl: http://localhost:30200
+
+    backend:
+      baseUrl: http://localhost:30200
+      listen: ':7007'
+      database:
+        client: better-sqlite3
+        connection: ':memory:'
+      csp:
+        connect-src: ["'self'", 'http:', 'https:']
+      cors:
+        origin: http://localhost:30200
+        methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+        credentials: true
+
+    auth:
+      providers:
+        guest: {}
+
+    catalog:
+      rules:
+        - allow: [Component, System, API, Resource, Location, Template, User, Group]
+      locations: []
