@@ -7,7 +7,7 @@ DEMO_DIR="$(cd "$SCRIPT_DIR/../../your-backstage-your-problems-your-metrics" && 
 LIB_DIR="$HOME/.devcontainer-lib"
 
 mkdir -p "$LIB_DIR"
-curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.1.4.tar.gz" \
+curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.2.0.tar.gz" \
   | tar -xz --strip-components=2 -C "$LIB_DIR"
 
 # Registry for demo service images built by Argo Workflows
@@ -27,7 +27,7 @@ docker run -d --restart=always -p "127.0.0.1:5001:5000" --name registry registry
 docker network connect kind registry
 
 # Deploy tools
-"$LIB_DIR/gitea/init.sh"          --version 12.5.3
+"$LIB_DIR/gitea/init.sh"          --version 12.5.3 --timeout 10m
 "$LIB_DIR/argo-events/init.sh"    --version 2.4.21
 "$LIB_DIR/argo-workflows/init.sh" --version 1.0.13
 "$LIB_DIR/argocd/init.sh"         --version v3.3.8

@@ -26,7 +26,22 @@ data:
       providers:
         guest: {}
 
+    gitea:
+      baseUrl: http://gitea-http.gitea.svc.cluster.local:3000
+      username: gitea
+      password: gitea
+
+    integrations:
+      gitea:
+        - host: gitea-http.gitea.svc.cluster.local:3000
+          username: gitea
+          password: gitea
+
     catalog:
       rules:
         - allow: [Component, System, API, Resource, Location, Template, User, Group]
-      locations: []
+      locations:
+        - type: file
+          target: /app/templates/create-service/template.yaml
+          rules:
+            - allow: [Template]
