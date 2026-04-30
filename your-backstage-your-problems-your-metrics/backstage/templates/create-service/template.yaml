@@ -1,0 +1,80 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: hello-world-service
+  title: Hello, World! Go Service
+  description: The Alfie Corp golden path for new Go services — one click to app repo, CI/CD pipeline, and a running deployment.
+  tags:
+    - go
+    - recommended
+spec:
+  owner: user:guest
+  type: service
+
+  parameters:
+    - title: Service Details
+      required:
+        - serviceName
+      properties:
+        serviceName:
+          title: Service Name
+          type: string
+          description: Lowercase letters, numbers, and hyphens only
+          pattern: '^[a-z][a-z0-9-]*$'
+          ui:autofocus: true
+        description:
+          title: Description
+          type: string
+          description: Short description of what this service does
+
+  steps:
+    - id: fetch-app
+      name: Fetch app skeleton
+      action: fetch:template
+      input:
+        url: ./skeleton/app
+        targetPath: ./app
+        values:
+          serviceName: ${{ parameters.serviceName }}
+          description: ${{ parameters.description | default('') }}
+
+    - id: create-app-repo
+      name: Create app repository
+      action: gitea:repo:create
+      input:
+        repoName: ${{ parameters.serviceName }}-app
+        description: ${{ parameters.description | default('') }}
+        sourcePath: ./app
+
+    - id: fetch-deployment
+      name: Fetch deployment skeleton
+      action: fetch:template
+      input:
+        url: ./skeleton/deployment
+        targetPath: ./deployment
+        values:
+          serviceName: ${{ parameters.serviceName }}
+
+    - id: create-deployment-repo
+      name: Create deployment repository
+      action: gitea:repo:create
+      input:
+        repoName: ${{ parameters.serviceName }}-deployment
+        description: Deployment manifests for ${{ parameters.serviceName }}
+        sourcePath: ./deployment
+
+    - id: register
+      name: Register component
+      action: catalog:register
+      input:
+        catalogInfoUrl: http://gitea-http.gitea.svc.cluster.local:3000/gitea/${{ parameters.serviceName }}-app/raw/branch/main/catalog-info.yaml
+
+  output:
+    links:
+      - title: App Repository
+        url: ${{ steps['create-app-repo'].output.repoUrl }}
+      - title: Deployment Repository
+        url: ${{ steps['create-deployment-repo'].output.repoUrl }}
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
