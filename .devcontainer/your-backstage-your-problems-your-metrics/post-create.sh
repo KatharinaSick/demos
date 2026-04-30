@@ -7,7 +7,7 @@ DEMO_DIR="$(cd "$SCRIPT_DIR/../../your-backstage-your-problems-your-metrics" && 
 LIB_DIR="$HOME/.devcontainer-lib"
 
 mkdir -p "$LIB_DIR"
-curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.2.4.tar.gz" \
+curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.2.5.tar.gz" \
   | tar -xz --strip-components=2 -C "$LIB_DIR"
 
 # Registry for demo service images built by Argo Workflows
@@ -44,8 +44,8 @@ kubectl apply -f "$DEMO_DIR/cluster/argo-workflows/"
 
 # Argo Events resources
 kubectl apply -f "$DEMO_DIR/cluster/argo-events/"
-until kubectl get deployment gitea-eventsource -n argo-events 2>/dev/null; do sleep 2; done
-kubectl rollout status deployment/gitea-eventsource -n argo-events --timeout=120s
+kubectl wait deployment -n argo-events -l eventsource-name=gitea \
+  --for=condition=available --timeout=120s
 
 # ArgoCD ApplicationSet
 GITEA_TOKEN=$(curl -s -X POST http://localhost:30110/api/v1/users/gitea/tokens \
