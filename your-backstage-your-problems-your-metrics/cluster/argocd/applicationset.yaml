@@ -7,9 +7,9 @@ spec:
   generators:
     - scmProvider:
         gitea:
-          baseURL: http://gitea-http.gitea.svc.cluster.local:3000
+          api: http://gitea-http.gitea.svc.cluster.local:3000
           owner: gitea
-          allBranches: false
+          insecure: true
           tokenRef:
             secretName: gitea-token
             key: token
