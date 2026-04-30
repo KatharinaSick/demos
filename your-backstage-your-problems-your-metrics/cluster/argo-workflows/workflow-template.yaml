@@ -1,0 +1,226 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: build-service
+  namespace: argo-workflows
+spec:
+  entrypoint: pipeline
+  serviceAccountName: build-service
+  arguments:
+    parameters:
+      - name: repoName
+      - name: commitSha
+      - name: commitMessage
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 512Mi
+  templates:
+    - name: pipeline
+      steps:
+        - - name: extract
+            template: extract
+            arguments:
+              parameters:
+                - name: repoName
+                  value: "{{workflow.parameters.repoName}}"
+                - name: commitMessage
+                  value: "{{workflow.parameters.commitMessage}}"
+        - - name: clone
+            template: clone
+            arguments:
+              parameters:
+                - name: repoName
+                  value: "{{workflow.parameters.repoName}}"
+        - - name: build-and-push
+            template: build-and-push
+            arguments:
+              parameters:
+                - name: serviceName
+                  value: "{{steps.extract.outputs.parameters.serviceName}}"
+                - name: commitSha
+                  value: "{{workflow.parameters.commitSha}}"
+        - - name: update-deployment
+            template: update-deployment
+            arguments:
+              parameters:
+                - name: serviceName
+                  value: "{{steps.extract.outputs.parameters.serviceName}}"
+                - name: commitSha
+                  value: "{{workflow.parameters.commitSha}}"
+        - - name: wait-for-deploy
+            template: wait-for-deploy
+            arguments:
+              parameters:
+                - name: serviceName
+                  value: "{{steps.extract.outputs.parameters.serviceName}}"
+        - - name: close-trace
+            template: close-trace
+            arguments:
+              parameters:
+                - name: traceparent
+                  value: "{{steps.extract.outputs.parameters.traceparent}}"
+                - name: serviceName
+                  value: "{{steps.extract.outputs.parameters.serviceName}}"
+                - name: startTimeSec
+                  value: "{{steps.extract.outputs.parameters.startTimeSec}}"
+
+    - name: extract
+      inputs:
+        parameters:
+          - name: repoName
+          - name: commitMessage
+      outputs:
+        parameters:
+          - name: serviceName
+            valueFrom:
+              path: /tmp/service-name
+          - name: traceparent
+            valueFrom:
+              path: /tmp/traceparent
+          - name: startTimeSec
+            valueFrom:
+              path: /tmp/start-time-s
+      script:
+        image: alpine:3.21
+        command: [sh]
+        env:
+          - name: REPO_NAME
+            value: "{{inputs.parameters.repoName}}"
+          - name: COMMIT_MESSAGE
+            value: "{{inputs.parameters.commitMessage}}"
+        source: |
+          printf '%s' "$REPO_NAME" | sed 's/-app$//' > /tmp/service-name
+          TRACEPARENT=$(printf '%s' "$COMMIT_MESSAGE" | grep -o 'Trace-Parent: [^ ]*' | awk '{print $2}')
+          printf '%s' "${TRACEPARENT:-}" > /tmp/traceparent
+          date +%s > /tmp/start-time-s
+
+    - name: clone
+      inputs:
+        parameters:
+          - name: repoName
+      script:
+        image: alpine/git:2.47.2
+        command: [sh]
+        source: |
+          git clone \
+            http://gitea:gitea@gitea-http.gitea.svc.cluster.local:3000/gitea/{{inputs.parameters.repoName}}.git \
+            /workspace/app
+        volumeMounts:
+          - name: workspace
+            mountPath: /workspace
+
+    - name: build-and-push
+      inputs:
+        parameters:
+          - name: serviceName
+          - name: commitSha
+      podSpecPatch: '{"hostNetwork": true}'
+      container:
+        image: gcr.io/kaniko-project/executor:v1.23.2
+        args:
+          - --context=/workspace/app
+          - --dockerfile=/workspace/app/Dockerfile
+          - --destination=registry:5000/{{inputs.parameters.serviceName}}:{{inputs.parameters.commitSha}}
+          - --insecure
+        volumeMounts:
+          - name: workspace
+            mountPath: /workspace
+
+    - name: update-deployment
+      inputs:
+        parameters:
+          - name: serviceName
+          - name: commitSha
+      script:
+        image: alpine/git:2.47.2
+        command: [sh]
+        source: |
+          git clone \
+            http://gitea:gitea@gitea-http.gitea.svc.cluster.local:3000/gitea/{{inputs.parameters.serviceName}}-deployment.git \
+            /workspace/deployment
+          cd /workspace/deployment
+          sed -i \
+            "s|image: registry:5000/{{inputs.parameters.serviceName}}:.*|image: registry:5000/{{inputs.parameters.serviceName}}:{{inputs.parameters.commitSha}}|" \
+            deployment.yaml
+          git config user.email "argo@workflows"
+          git config user.name "Argo Workflows"
+          git add deployment.yaml
+          git commit -m "chore: update image to {{inputs.parameters.commitSha}}"
+          git push
+        volumeMounts:
+          - name: workspace
+            mountPath: /workspace
+
+    - name: wait-for-deploy
+      inputs:
+        parameters:
+          - name: serviceName
+      script:
+        image: bitnami/kubectl:1.32.3
+        command: [sh]
+        source: |
+          kubectl rollout status deployment/{{inputs.parameters.serviceName}} \
+            -n default --timeout=5m
+
+    - name: close-trace
+      inputs:
+        parameters:
+          - name: traceparent
+          - name: serviceName
+          - name: startTimeSec
+      script:
+        image: python:3.12-alpine
+        command: [python]
+        source: |
+          import base64, json, os, time, urllib.request
+
+          traceparent = "{{inputs.parameters.traceparent}}"
+          service_name = "{{inputs.parameters.serviceName}}"
+          start_ns = int("{{inputs.parameters.startTimeSec}}") * 1_000_000_000
+
+          parts = traceparent.split("-") if traceparent else []
+          if len(parts) < 4:
+              print("No valid traceparent, skipping OTel span")
+              exit(0)
+
+          trace_id_hex = parts[1]
+          parent_span_id_hex = parts[2]
+          span_id = os.urandom(8).hex()
+          end_ns = time.time_ns()
+
+          def h2b(h):
+              return base64.b64encode(bytes.fromhex(h)).decode()
+
+          payload = {
+              "resourceSpans": [{
+                  "resource": {
+                      "attributes": [{"key": "service.name", "value": {"stringValue": "argo-workflows"}}]
+                  },
+                  "scopeSpans": [{
+                      "spans": [{
+                          "traceId": h2b(trace_id_hex),
+                          "spanId": h2b(span_id),
+                          "parentSpanId": h2b(parent_span_id_hex),
+                          "name": f"deploy {service_name}",
+                          "kind": 1,
+                          "startTimeUnixNano": str(start_ns),
+                          "endTimeUnixNano": str(end_ns),
+                          "status": {"code": 2}
+                      }]
+                  }]
+              }]
+          }
+
+          req = urllib.request.Request(
+              "http://collector.otel.svc.cluster.local:4318/v1/traces",
+              json.dumps(payload).encode(),
+              {"Content-Type": "application/json"},
+              method="POST"
+          )
+          urllib.request.urlopen(req)
+          print(f"Span sent: trace={trace_id_hex} span={span_id}")

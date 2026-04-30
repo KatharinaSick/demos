@@ -1,0 +1,56 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: gitea
+  namespace: argo-events
+spec:
+  serviceAccountName: sensor-workflow-creator
+  dependencies:
+    - name: gitea-push
+      eventSourceName: gitea
+      eventName: push
+      filters:
+        data:
+          - path: body.repository.name
+            type: string
+            comparator: "=~"
+            value: ".*-app$"
+  triggers:
+    - template:
+        name: build-service
+        argoWorkflow:
+          group: argoproj.io
+          version: v1alpha1
+          resource: workflows
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: build-service-
+                namespace: argo-workflows
+              spec:
+                workflowTemplateRef:
+                  name: build-service
+                arguments:
+                  parameters:
+                    - name: repoName
+                      value: ""
+                    - name: commitSha
+                      value: ""
+                    - name: commitMessage
+                      value: ""
+          parameters:
+            - src:
+                dependencyName: gitea-push
+                dataKey: body.repository.name
+              dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: gitea-push
+                dataKey: body.after
+              dest: spec.arguments.parameters.1.value
+            - src:
+                dependencyName: gitea-push
+                dataKey: body.commits.0.message
+              dest: spec.arguments.parameters.2.value

@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: services
+  namespace: argocd
+spec:
+  generators:
+    - scmProvider:
+        gitea:
+          baseURL: http://gitea-http.gitea.svc.cluster.local:3000
+          owner: gitea
+          allBranches: false
+          tokenRef:
+            secretName: gitea-token
+            key: token
+        filters:
+          - repositoryMatch: '.*-deployment$'
+  template:
+    metadata:
+      name: '{{repository}}'
+    spec:
+      project: default
+      source:
+        repoURL: '{{url}}'
+        targetRevision: '{{branch}}'
+        path: .
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: default
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
