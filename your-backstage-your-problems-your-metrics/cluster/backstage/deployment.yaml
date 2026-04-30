@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: backstage
-          image: ghcr.io/ksick/demos/your-backstage-your-problems-your-metrics/backstage:0.4.0
+          image: ghcr.io/katharinasick/demos/your-backstage-your-problems-your-metrics/backstage:0.4.0
           imagePullPolicy: Always
           ports:
             - containerPort: 7007
