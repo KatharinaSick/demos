@@ -1,176 +1,159 @@
 # Problem 1 — Service Creation
 
-## Problem Statement
+**Problem:** Developer wants a new service → asks around, gets inconsistent answers, waits days for ops.  
+**Solution shown:** Backstage Software Template — one form, full golden path, wired up automatically.  
+**Backstage feature:** Software Templates | **DevEx pillar:** Flow State
 
-When a developer wants to create a new service, they don't know where to start — they ask
-different people, get inconsistent answers, struggle to set up CI/CD themselves, and wait days
-for the ops team to unblock them. All before they've written a single line of business logic.
-
-**Backstage feature:** Software Templates  
-**DevEx pillar:** Flow State
+∫![img.png](img.png)
 
 ---
 
 ## Demo Flow
 
-Two repos are created per service — this is intentional and part of the demo story:
-`<service-name>` (app code) and `<service-name>-deployment` (k8s manifests). One template,
-one click, full golden path wired up automatically.
+Two repos per service: `<service-name>` (app code) and `<service-name>-deployment` (k8s manifests).
 
 ```
-Developer opens Backstage template
-  → fills in: service name, team, language
-  → clicks Create
+Developer clicks "Create" in Backstage template UI
 
-Backstage scaffolder:
-  → creates Gitea repo "<service-name>" with service scaffold
-  → initial commit message includes "Trace-Parent: <traceparent>"
-  → creates Gitea repo "<service-name>-deployment" with k8s manifests
-  → registers service in Backstage catalog (catalog-info.yaml)
+Backstage scaffolder (OTel-instrumented):
+  → custom action "create:gitea-repo":
+      - injects active OTel context → gets traceparent string
+      - creates Gitea repo "<service-name>" with app skeleton
+      - initial commit message: "feat: initialize service\n\nTrace-Parent: <traceparent>"
+      - creates Gitea repo "<service-name>-deployment" with k8s manifests
+      - registers service in Backstage catalog (catalog-info.yaml)
 
 Argo Events:
-  → detects push to "<service-name>" repo (webhook)
-  → extracts Trace-Parent from commit message via JSONPath
-  → triggers Argo Workflow with traceparent as parameter
+  → Gitea push webhook firesperfec
+  → Sensor extracts full commit message ($.commits[0].message) as workflow parameter
+  → triggers Argo Workflow
 
 Argo Workflow:
-  → step 1: init trace (use traceparent from parameter as parent span, or start fresh if absent)
-  → step 2: build Docker image
-  → step 3: push image to in-cluster registry
-  → step 4: update image tag in "<service-name>-deployment" (commit to Gitea)
+  → step 1 (parse-traceparent): shell script extracts traceparent from commit message
+                                 → output parameter: traceparent
+  → step 2 (build):             builds Docker image  [TRACEPARENT env var set]
+  → step 3 (push):              pushes image to in-cluster registry  [TRACEPARENT env var set]
+  → step 4 (update-manifests):  commits new image tag to "<service-name>-deployment"  [TRACEPARENT env var set]
+  → step 5 (wait-for-deploy):   kubectl rollout status → blocks until pod is running  [TRACEPARENT env var set]
+                                 → when this exits: trace is complete
 
 ArgoCD:
   → detects manifest change in "<service-name>-deployment"
-  → syncs → service is running in cluster
+  → syncs → service is running
 ```
 
----
-
-## Stack
-
-| Component | Purpose | How |
-|-----------|---------|-----|
-| Backstage | Template UI + scaffolder | Deployed in kind via Helm, custom image from ghcr.io |
-| Gitea | Git provider | Deployed in kind via Helm |
-| Argo Events | Gitea webhook → workflow trigger | Deployed in kind via Helm |
-| Argo Workflows | CI pipeline (build + push) | Deployed in kind via Helm |
-| ArgoCD | GitOps deployment | Deployed in kind via Helm |
-| In-cluster registry | Docker image storage | Simple registry in kind |
-| OTel Collector | Trace collection | Deployed in kind via Helm, sends to Dynatrace |
+One continuous OTel trace from "Create clicked" to "pod running."
 
 ---
 
 ## Trace Design
 
-**Goal:** one continuous trace from "user opens template" to "service deployed", spanning all systems.
+**Carrier:** W3C `traceparent` embedded in the initial commit message.
 
-**Approach:** carry W3C `traceparent` via the initial commit message (Option A).
+**Why commit message?**
+- Backstage already has Gitea API access — no new permissions
+- Gitea push webhook includes commit messages → Argo Events can pass it as a workflow parameter
+- Developer commits after the initial one won't have the header → fresh trace automatically
 
-### Why commit message?
-- Backstage already has Gitea API access (creates the repo) — no new permissions needed
-- Gitea push webhook payload includes commit messages → Argo Events reads it via JSONPath
-- Subsequent developer commits won't have the header → fresh trace automatically
-- Pure GitOps: state lives in git history, nothing to clean up
-
-### Trace context flow
-
-```
-Backstage backend (OTel enabled via env vars)
-  → scaffolder starts span: "create-service"
-    → custom scaffolder action "create:gitea-repo":
-        - creates Gitea repo
-        - writes initial commit with message:
-          "feat: initialize service from Backstage template\n\nTrace-Parent: 00-<traceid>-<spanid>-01"
-        - registers entity in catalog
-
-Argo Events EventSource (Gitea push webhook)
-  → triggers Sensor with commit message extracted via JSONPath: $.commits[0].message
-  → Sensor passes Trace-Parent as workflow parameter
-
-Argo Workflow (OTel enabled via env vars)
-  → step 1: parse Trace-Parent from parameter, set as TRACEPARENT env var
-  → subsequent steps run as child spans of the Backstage scaffolder span
+**Getting the traceparent in the custom action (Node.js):**
+```typescript
+import { context, propagation } from '@opentelemetry/api';
+const carrier: Record<string, string> = {};
+propagation.inject(context.active(), carrier);
+const traceparent = carrier['traceparent'];
 ```
 
-### OTel configuration
-
-All components export to the in-cluster OTel Collector, which forwards to Dynatrace.
-
-**Backstage** — env vars in k8s Deployment:
+**Parsing it in the workflow (step 1):**
+```bash
+echo "$COMMIT_MSG" | grep -oP 'Trace-Parent: \K\S+'
+```
+Output as Argo parameter → passed to all subsequent steps as `TRACEPARENT` env var:
 ```yaml
-OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-OTEL_SERVICE_NAME: backstage
+env:
+  - name: TRACEPARENT
+    value: "{{steps.parse-traceparent.outputs.parameters.traceparent}}"
 ```
 
-**Argo Workflows** — env vars on workflow controller:
-```yaml
-OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
-OTEL_SERVICE_NAME: argo-workflows
-```
+**Production note — ArgoCD:**  
+In production you'd want real spans from ArgoCD (sync start, sync end, health check) via ArgoCD Notifications sending to a custom webhook receiver that emits spans. For this demo, the `wait-for-deploy` workflow step (kubectl rollout status) is a pragmatic substitute — it captures the right duration without instrumenting ArgoCD itself.
+
+**Argo Events is invisible in the trace:**  
+It has no OTel instrumentation. The trace jumps directly from the Backstage scaffolder span to the first Argo Workflow step. There will be a small visible time gap (webhook delivery + trigger latency, typically a few seconds) with no span covering it — same trace ID, connected, just no span for the routing layer itself.
+
+**Closing the trace (step 5):**  
+`kubectl rollout status` blocks until the pod is running. Since `TRACEPARENT` is set, this step's span is a child of the original scaffolder span. When it exits: done.  
+No ArgoCD Notifications needed.
+
+---
+
+## Stack
+
+| Component | Purpose |
+|-----------|---------|
+| Backstage | Template UI + scaffolder |
+| Gitea | Git provider |
+| Argo Events | Gitea webhook → workflow trigger |
+| Argo Workflows | CI pipeline (build → push → deploy wait) |
+| ArgoCD | GitOps deployment (ApplicationSet, auto-sync) |
+| In-cluster registry | Docker image storage |
+| OTel Collector | Collects traces, forwards to Dynatrace |
+
+All deployed in kind via Helm. Backstage and Argo Workflows export traces via `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 ---
 
 ## What Needs to Be Built
 
 ### Backstage
-
-- [ ] Configure OTel exporter (env vars in Helm values)
-- [ ] Alfi corp catalog entities: `Group`, `User`, `System` for the platform
-- [ ] Custom scaffolder action `create:gitea-repo` that:
+- [ ] OTel env vars in Helm values (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME: backstage`)
+- [ ] Catalog seed entities: `Group`, `User`, `System` for the fictional platform team
+- [ ] Custom scaffolder action `create:gitea-repo`:
+  - reads active OTel span via `propagation.inject`
   - creates repo via Gitea API
-  - writes initial commit with `Trace-Parent` in message
-- [ ] Software Template (`template.yaml`) with steps:
-  1. Collect input (service name, team, language)
-  2. Fetch skeleton (cookiecutter-style template files)
-  3. `create:gitea-repo` for `<service-name>` (custom action)
-  4. `create:gitea-repo` for `<service-name>-deployment` (custom action)
-  5. `catalog:register` (built-in action)
-- [ ] App skeleton (`skeleton/app/`) containing:
-  - `catalog-info.yaml` (with owner, system, type)
-  - Simple hello-world service (Go or Python — keep it minimal)
-  - `Dockerfile`
-  - Basic TechDocs stub (`mkdocs.yml` + `docs/index.md`)
-- [ ] Deployment skeleton (`skeleton/deployment/`) containing:
-  - `deployment.yaml` + `service.yaml` (image tag as template variable)
+  - makes initial commit with `Trace-Parent: <traceparent>` in message
+- [ ] Software Template (`template.yaml`):
+  1. Inputs: service name, team, language
+  2. Fetch skeleton
+  3. `create:gitea-repo` for `<service-name>`
+  4. `create:gitea-repo` for `<service-name>-deployment`
+  5. `catalog:register`
+- [ ] App skeleton (`skeleton/app/`): `catalog-info.yaml`, hello-world Go service, `Dockerfile`, TechDocs stub
+- [ ] Deployment skeleton (`skeleton/deployment/`): `deployment.yaml` + `service.yaml` with image tag as template variable
 
 ### Argo Events
-
-- [ ] `EventSource` — Gitea webhook, listens for push events on repos matching a pattern
-- [ ] `Sensor` — extracts `Trace-Parent` from commit message via JSONPath, triggers workflow
+- [ ] `EventSource` — Gitea push webhook
+- [ ] `Sensor` — passes `$.commits[0].message` as workflow parameter, triggers workflow
 
 ### Argo Workflows
-
-- [ ] `WorkflowTemplate` with steps: init-trace → build → push → update-manifests
-- [ ] OTel configured on the workflow controller
+- [ ] `WorkflowTemplate` with steps: parse-traceparent → build → push → update-manifests → wait-for-deploy
+- [ ] All steps after step 1 receive `TRACEPARENT` via output parameter reference
+- [ ] OTel env vars on workflow controller (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME: argo-workflows`)
 - [ ] RBAC for image push to in-cluster registry
 
 ### ArgoCD
-
-- [ ] ApplicationSet watching Gitea org for repos matching `*-deployment`
-- [ ] Auto-sync enabled
+- [ ] `ApplicationSet` watching Gitea org for repos matching `*-deployment`, auto-sync on
 
 ### Cluster / Devcontainer
-
-- [ ] kind config with port mappings for: Backstage, Gitea, ArgoCD UI, Argo Workflows UI, Jaeger/Dynatrace
-- [ ] In-cluster Docker registry
-- [ ] `lib/` init scripts for each component (following open-ecosystem-challenges pattern)
-- [ ] `.devcontainer/devcontainer.json` wiring it all together
-
----
-
-## Metrics to Show in the Demo
-
-| Metric | Where to show |
-|--------|--------------|
-| % of new services created via templates | Backstage catalog: filter components by `backstage.io/created-by` |
-| Template completion rate / error rate | Argo Workflows UI: successful vs failed workflow runs |
-| Time from template trigger to first deployment | The OTel trace — start span to final ArgoCD sync |
-| % of template runs completing the full pipeline | Argo Workflows: completed workflow count vs triggered |
+- [ ] kind config with port mappings (Backstage, Gitea, ArgoCD UI, Argo Workflows UI)
+- [ ] kind `containerdConfigPatches` for in-cluster registry
+- [ ] Init scripts for each component
+- [ ] `.devcontainer/devcontainer.json`
 
 ---
 
-## Open Questions
+## Metrics to Show
 
-- Language for the service skeleton? Go is minimal and fast to build; Python avoids compilation.
-- Does Dynatrace need to be in-cluster or can OTel collector forward externally? (External is simpler for the devcontainer — just needs a DT endpoint + token as env vars)
-- Do we want ArgoCD UI exposed for the demo or just show it's running?
+| Metric | Where |
+|--------|-------|
+| % of services created via templates | Backstage catalog: filter by `backstage.io/scaffolded-from` annotation |
+| Template completion / error rate | Argo Workflows UI: successful vs failed runs |
+| Time from Create click to pod running | OTel trace: scaffolder start span → wait-for-deploy end span |
+| % of pipeline runs completing fully | Argo Workflows: completed vs triggered workflow count |
+
+---
+
+## Decisions
+
+- **Skeleton language:** Go
+- **Dynatrace:** OTel Collector forwards externally; DT endpoint + token as devcontainer env vars
+- **ArgoCD UI:** exposed by default via katharinasick/devcontainer-lib
