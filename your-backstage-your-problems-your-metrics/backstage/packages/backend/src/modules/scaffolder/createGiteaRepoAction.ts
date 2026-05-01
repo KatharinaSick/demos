@@ -71,16 +71,20 @@ export function createGiteaRepoAction({ config }: { config: Config }) {
         ? `feat: initialize service from Backstage template\n\nTrace-Parent: ${traceparent}`
         : 'feat: initialize service from Backstage template';
 
-      ctx.logger.info(`Pushing workspace to ${repo.html_url}`);
-
-      const authenticatedCloneUrl = repo.clone_url.replace(
+      // Construct the clone URL from baseUrl rather than repo.clone_url, because
+      // Gitea's API returns clone_url based on its ROOT_URL setting which may not
+      // be the in-cluster address.
+      const cloneUrl = `${baseUrl}/${username}/${repoName}.git`;
+      const authenticatedCloneUrl = cloneUrl.replace(
         '://',
         `://${username}:${password}@`,
       );
 
+      ctx.logger.info(`Pushing workspace to ${cloneUrl}`);
+
       const repoPath = path.join(ctx.workspacePath, sourcePath);
       const git = simpleGit(repoPath);
-      await git.init();
+      await git.raw(['init', '-b', defaultBranch]);
       await git.addConfig('user.name', 'Backstage Scaffolder');
       await git.addConfig('user.email', 'scaffolder@backstage.io');
       await git.add('.');
@@ -89,7 +93,7 @@ export function createGiteaRepoAction({ config }: { config: Config }) {
       await git.push('origin', defaultBranch, ['--set-upstream']);
 
       ctx.output('repoUrl', repo.html_url);
-      ctx.output('cloneUrl', repo.clone_url);
+      ctx.output('cloneUrl', cloneUrl);
     },
   });
 }
