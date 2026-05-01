@@ -6,6 +6,10 @@ talk [Your Backstage, Your Problems, Your Metrics](https://sessionize.com/s/ksic
 
 ## Structure
 
+Backstage is deployed directly (not via ArgoCD) to keep the demo focused —
+ArgoCD's role here is deploying services created by the golden path, not platform
+tooling.
+
 ```
 backstage/   Backstage instance used for all demos
 ```

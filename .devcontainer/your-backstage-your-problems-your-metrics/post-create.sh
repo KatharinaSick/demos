@@ -51,7 +51,7 @@ kubectl wait deployment -n argo-events -l eventsource-name=gitea --for=condition
 GITEA_TOKEN=$(curl -s -X POST http://localhost:30110/api/v1/users/gitea/tokens \
   -u gitea:gitea \
   -H "Content-Type: application/json" \
-  -d '{"name": "argocd"}' | jq -r '.sha1')
+  -d '{"name": "argocd", "scopes": ["read:repository", "read:user"]}' | jq -r '.sha1')
 kubectl create secret generic gitea-token \
   --from-literal=token="$GITEA_TOKEN" \
   -n argocd
