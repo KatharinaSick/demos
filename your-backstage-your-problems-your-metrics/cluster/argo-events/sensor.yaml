@@ -13,8 +13,8 @@ spec:
         data:
           - path: body.repository.name
             type: string
-            comparator: "=~"
-            value: ".*-app$"
+            value:
+              - ".*-app$"
   triggers:
     - template:
         name: build-service

@@ -29,14 +29,14 @@ data:
 
     gitea:
       baseUrl: http://gitea-http.gitea.svc.cluster.local:3000
-      username: gitea
-      password: gitea
+      username: admin
+      password: a-super-secure-password
 
     integrations:
       gitea:
         - host: gitea-http.gitea.svc.cluster.local:3000
-          username: gitea
-          password: gitea
+          username: admin
+          password: a-super-secure-password
 
     catalog:
       rules:

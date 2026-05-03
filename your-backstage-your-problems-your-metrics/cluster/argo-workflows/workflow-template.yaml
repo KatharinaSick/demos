@@ -32,12 +32,14 @@ spec:
                   value: "{{workflow.parameters.commitMessage}}"
         - - name: clone
             template: clone
+            when: "\"{{steps.extract.outputs.parameters.serviceName}}\" != \"\""
             arguments:
               parameters:
                 - name: repoName
                   value: "{{workflow.parameters.repoName}}"
         - - name: build-and-push
             template: build-and-push
+            when: "\"{{steps.extract.outputs.parameters.serviceName}}\" != \"\""
             arguments:
               parameters:
                 - name: serviceName
@@ -46,6 +48,7 @@ spec:
                   value: "{{workflow.parameters.commitSha}}"
         - - name: update-deployment
             template: update-deployment
+            when: "\"{{steps.extract.outputs.parameters.serviceName}}\" != \"\""
             arguments:
               parameters:
                 - name: serviceName
@@ -54,12 +57,14 @@ spec:
                   value: "{{workflow.parameters.commitSha}}"
         - - name: wait-for-deploy
             template: wait-for-deploy
+            when: "\"{{steps.extract.outputs.parameters.serviceName}}\" != \"\""
             arguments:
               parameters:
                 - name: serviceName
                   value: "{{steps.extract.outputs.parameters.serviceName}}"
         - - name: close-trace
             template: close-trace
+            when: "\"{{steps.extract.outputs.parameters.serviceName}}\" != \"\""
             arguments:
               parameters:
                 - name: traceparent
@@ -94,6 +99,12 @@ spec:
           - name: COMMIT_MESSAGE
             value: "{{inputs.parameters.commitMessage}}"
         source: |
+          if ! printf '%s' "$REPO_NAME" | grep -q '\-app$'; then
+            printf '' > /tmp/service-name
+            printf '' > /tmp/traceparent
+            printf '0' > /tmp/start-time-s
+            exit 0
+          fi
           printf '%s' "$REPO_NAME" | sed 's/-app$//' > /tmp/service-name
           TRACEPARENT=$(printf '%s' "$COMMIT_MESSAGE" | grep -o 'Trace-Parent: [^ ]*' | awk '{print $2}')
           printf '%s' "${TRACEPARENT:-}" > /tmp/traceparent
@@ -108,7 +119,7 @@ spec:
         command: [sh]
         source: |
           git clone \
-            http://gitea:gitea@gitea-http.gitea.svc.cluster.local:3000/gitea/{{inputs.parameters.repoName}}.git \
+            http://admin:a-super-secure-password@gitea-http.gitea.svc.cluster.local:3000/admin/{{inputs.parameters.repoName}}.git \
             /workspace/app
         volumeMounts:
           - name: workspace
@@ -127,6 +138,7 @@ spec:
           - --dockerfile=/workspace/app/Dockerfile
           - --destination=registry:5000/{{inputs.parameters.serviceName}}:{{inputs.parameters.commitSha}}
           - --insecure
+          - --ignore-path=/product_uuid
         volumeMounts:
           - name: workspace
             mountPath: /workspace
@@ -141,7 +153,7 @@ spec:
         command: [sh]
         source: |
           git clone \
-            http://gitea:gitea@gitea-http.gitea.svc.cluster.local:3000/gitea/{{inputs.parameters.serviceName}}-deployment.git \
+            http://admin:a-super-secure-password@gitea-http.gitea.svc.cluster.local:3000/admin/{{inputs.parameters.serviceName}}-deployment.git \
             /workspace/deployment
           cd /workspace/deployment
           sed -i \
@@ -164,6 +176,9 @@ spec:
         image: bitnami/kubectl:1.32.3
         command: [sh]
         source: |
+          until kubectl get deployment/{{inputs.parameters.serviceName}} -n default 2>/dev/null; do
+            sleep 5
+          done
           kubectl rollout status deployment/{{inputs.parameters.serviceName}} \
             -n default --timeout=5m
 

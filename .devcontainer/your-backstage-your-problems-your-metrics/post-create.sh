@@ -4,10 +4,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEMO_DIR="$(cd "$SCRIPT_DIR/../../your-backstage-your-problems-your-metrics" && pwd)"
 
-LIB_DIR="$HOME/.devcontainer-lib"
-
-mkdir -p "$LIB_DIR"
-curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.2.6.tar.gz" \
+LIB_DIR=$(mktemp -d)
+curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.3.0.tar.gz" \
   | tar -xz --strip-components=2 -C "$LIB_DIR"
 
 # Registry for demo service images built by Argo Workflows
@@ -26,13 +24,17 @@ docker run -d --restart=always -p "127.0.0.1:5001:5000" --name registry registry
 # Connect registry to kind network so nodes can reach registry:5000
 docker network connect kind registry
 
-# Deploy tools
-"$LIB_DIR/gitea/init.sh"          --version 12.5.3 --timeout 10m
-"$LIB_DIR/argo-events/init.sh"    --version 2.4.21
-"$LIB_DIR/argo-workflows/init.sh" --version 1.0.13
+# Deploy tools — submit manifests without waiting, then wait for all in parallel
+"$LIB_DIR/gitea/init.sh"          --version 12.5.3  --no-wait
+"$LIB_DIR/argo-events/init.sh"    --version 2.4.21  --no-wait
+"$LIB_DIR/argo-workflows/init.sh" --version 1.0.13  --no-wait
+"$LIB_DIR/jaeger/init.sh"         --version 4.7.0   --no-wait
+"$LIB_DIR/otel-collector/init.sh" --version 0.148.0 --no-wait
 "$LIB_DIR/argocd/init.sh"         --version v3.3.8
-"$LIB_DIR/jaeger/init.sh"          --version 4.7.0
-"$LIB_DIR/otel-collector/init.sh"  --version 0.148.0
+
+"$LIB_DIR/wait.sh" --timeout 10m gitea argo-events argo-workflows jaeger otel-collector
+
+rm -rf "$LIB_DIR"
 
 # Backstage
 kubectl create namespace backstage
@@ -47,11 +49,17 @@ kubectl apply -f "$DEMO_DIR/cluster/argo-events/"
 until kubectl get deployment -n argo-events -l eventsource-name=gitea --no-headers 2>/dev/null | grep -q .; do sleep 2; done
 kubectl wait deployment -n argo-events -l eventsource-name=gitea --for=condition=available --timeout=120s
 
-# ArgoCD ApplicationSet
-GITEA_TOKEN=$(curl -s -X POST http://localhost:30110/api/v1/users/gitea/tokens \
-  -u gitea:gitea \
+# Create argocd-apps repo — ArgoCD watches this for Application manifests
+curl -s -X POST http://localhost:30110/api/v1/user/repos \
+  -u admin:a-super-secure-password \
   -H "Content-Type: application/json" \
-  -d '{"name": "argocd", "scopes": ["read:repository", "read:user"]}' | jq -r '.sha1')
+  -d '{"name": "argocd-apps", "private": false, "auto_init": true, "default_branch": "main"}'
+
+# ArgoCD
+GITEA_TOKEN=$(curl -s -X POST http://localhost:30110/api/v1/users/admin/tokens \
+  -u admin:a-super-secure-password \
+  -H "Content-Type: application/json" \
+  -d '{"name": "argocd", "scopes": ["read:repository", "read:user", "read:organization"]}' | jq -r '.sha1')
 kubectl create secret generic gitea-token \
   --from-literal=token="$GITEA_TOKEN" \
   -n argocd
@@ -59,7 +67,7 @@ kubectl apply -f "$DEMO_DIR/cluster/argocd/"
 
 # Configure Gitea user webhook to forward push events to Argo Events
 curl -s -X POST http://localhost:30110/api/v1/user/hooks \
-  -u gitea:gitea \
+  -u admin:a-super-secure-password \
   -H "Content-Type: application/json" \
   -d '{
     "type": "gitea",

@@ -63,11 +63,37 @@ spec:
         description: Deployment manifests for ${{ parameters.serviceName }}
         sourcePath: ./deployment
 
+    - id: register-argocd-app
+      name: Register ArgoCD application
+      action: gitea:file:create
+      input:
+        repoName: argocd-apps
+        filePath: ${{ parameters.serviceName }}.yaml
+        content: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: ${{ parameters.serviceName }}
+            namespace: argocd
+          spec:
+            project: default
+            source:
+              repoURL: http://gitea-http.gitea.svc.cluster.local:3000/admin/${{ parameters.serviceName }}-deployment.git
+              targetRevision: main
+              path: .
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: default
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+
     - id: register
       name: Register component
       action: catalog:register
       input:
-        catalogInfoUrl: http://gitea-http.gitea.svc.cluster.local:3000/gitea/${{ parameters.serviceName }}-app/raw/branch/main/catalog-info.yaml
+        catalogInfoUrl: http://gitea-http.gitea.svc.cluster.local:3000/admin/${{ parameters.serviceName }}-app/raw/branch/main/catalog-info.yaml
 
   output:
     links:
