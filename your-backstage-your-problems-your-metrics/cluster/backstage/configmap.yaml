@@ -41,6 +41,14 @@ data:
     catalog:
       rules:
         - allow: [Component, System, API, Resource, Location, Template, User, Group]
+      providers:
+        gitea:
+          giteaOrg:
+            host: gitea-http.gitea.svc.cluster.local:3000
+            orgName: admin
+            schedule:
+              frequency: { minutes: 1 }
+              timeout: { minutes: 3 }
       locations:
         - type: file
           target: /app/templates/create-service/template.yaml

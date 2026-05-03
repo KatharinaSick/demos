@@ -1,4 +1,4 @@
-dimport { createTemplateAction } from '@backstage/plugin-scaffolder-node';
+import { createTemplateAction } from '@backstage/plugin-scaffolder-node';
 import { Config } from '@backstage/config';
 
 export function createGiteaFileAction({ config }: { config: Config }) {
