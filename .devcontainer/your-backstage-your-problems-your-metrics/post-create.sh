@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEMO_DIR="$(cd "$SCRIPT_DIR/../../your-backstage-your-problems-your-metrics" && pwd)"
 
 LIB_DIR=$(mktemp -d)
-curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.3.0.tar.gz" \
+curl -fsSL "https://github.com/KatharinaSick/devcontainer-lib/archive/refs/tags/v0.3.1.tar.gz" \
   | tar -xz --strip-components=2 -C "$LIB_DIR"
 
 # Registry for demo service images built by Argo Workflows
@@ -35,6 +35,17 @@ docker network connect kind registry
 "$LIB_DIR/wait.sh" --timeout 10m gitea argo-events argo-workflows jaeger otel-collector
 
 rm -rf "$LIB_DIR"
+
+# Override OTel Collector config to add Dynatrace exporter
+# Requires DT_ENDPOINT and DT_API_TOKEN to be set as Codespaces secrets
+kubectl create secret generic dynatrace-credentials \
+  --from-literal=DT_ENDPOINT="$DT_ENDPOINT" \
+  --from-literal=DT_API_TOKEN="$DT_API_TOKEN" \
+  -n otel
+kubectl apply -f "$DEMO_DIR/cluster/otel-collector/"
+kubectl set env deployment/collector -n otel --from=secret/dynatrace-credentials
+kubectl rollout restart deployment/collector -n otel
+kubectl rollout status deployment/collector -n otel --timeout=120s
 
 # Backstage
 kubectl create namespace backstage

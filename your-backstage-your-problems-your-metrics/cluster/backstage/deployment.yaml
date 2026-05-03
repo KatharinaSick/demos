@@ -23,7 +23,7 @@ spec:
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://collector.otel.svc.cluster.local:4318
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
-              value: http/protobuf
+              value: http/json
             - name: OTEL_SERVICE_NAME
               value: backstage
           volumeMounts:

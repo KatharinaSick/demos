@@ -83,10 +83,20 @@ All Gitea repos are public so ArgoCD can clone them without credentials.
 
 RBAC note: the Sensor pod runs as the `default` ServiceAccount in `argo-events` despite the spec specifying `sensor-workflow-creator`. Both SAs are bound to the ClusterRole.
 
+## Backstage OTel setup
+
+Backstage emits traces and metrics via OTLP to the in-cluster OTel Collector (`collector.otel.svc.cluster.local:4318`). The SDK is initialized in `packages/backend/src/instrumentation.js`, loaded via `--require` in both the dev start script and the Dockerfile CMD.
+
+The collector forwards to both Jaeger (traces) and Dynatrace (traces + metrics). Dynatrace credentials are stored in a Kubernetes Secret `dynatrace-credentials` in the `otel` namespace and are injected into the collector deployment as env vars.
+
+**Before running the devcontainer**, fill in real values in `cluster/otel-collector/secret.yaml`:
+- `DT_ENDPOINT`: your Dynatrace environment URL, e.g. `https://abc12345.live.dynatrace.com`
+- `DT_API_TOKEN`: an API token with scopes `openTelemetryTrace.ingest` and `metrics.ingest`
+
 ## Known gotchas
 
 - **Kaniko in kind**: needs `--ignore-path=/product_uuid` arg or it fails with a permissions error.
 - **Gitea tokens don't persist across restarts**: `post-start.sh` deletes and recreates the ArgoCD Gitea token on every devcontainer start and restarts `argocd-applicationset-controller` to pick it up.
-- **devcontainer-lib v0.3.0**: all tool installs use `--no-wait`; `wait.sh --timeout 10m` waits for all in parallel. ArgoCD (`argocd/init.sh`) doesn't support `--no-wait` and runs blocking before `wait.sh`.
+- **devcontainer-lib v0.3.1**: all tool installs use `--no-wait`; `wait.sh --timeout 10m` waits for all in parallel. ArgoCD (`argocd/init.sh`) doesn't support `--no-wait` and runs blocking before `wait.sh`.
 - **Argo Workflows Emissary executor RBAC**: needs `workflowtaskresults` (create, patch) and `pods` (get, watch, patch) permissions on the `build-service` ClusterRole.
-- **OTel in Backstage**: the `propagation.inject` call in `gitea:repo:create` only produces a `traceparent` if there is an active span in context when the scaffolder action runs. If the Backstage OTel SDK isn't configured to start a root span for scaffolder task execution, `traceparent` will be empty and the trace won't be linked.
+- **OTel in Backstage**: the `propagation.inject` call in `gitea:repo:create` only produces a `traceparent` if there is an active span in context when the scaffolder action runs. With `instrumentation.js` loaded, the NodeSDK auto-instrumentation provides the root span so this now works end-to-end.
